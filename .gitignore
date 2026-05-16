@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Buildozer
+.buildozer/
+bin/
+build.log
+
+# Build artifacts
+*.apk
+*.aab
+
+# Data files
+big.txt
