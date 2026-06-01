@@ -21,7 +21,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,txt,html,css,js,json,svg,ico
 
 # (list) List of inclusions using pattern matching
-source.include_patterns = backend/crea_processed.txt
+source.include_patterns = backend/crea_processed.txt,backend/big.txt
 
 # (list) Source files to exclude (leave empty to not exclude anything)
 #source.exclude_exts = spec
@@ -31,7 +31,7 @@ source.include_patterns = backend/crea_processed.txt
 
 # (list) List of exclusions using pattern matching
 # Do not prefix with './'
-source.exclude_patterns = backend/big.txt,backend/es_full.txt,backend/CREA_total.TXT
+source.exclude_patterns = backend/CREA_total.TXT
 
 # (str) Application versioning (method 1)
 version = 0.1
@@ -144,11 +144,11 @@ android.ndk = 25b
 # android.accept_sdk_license = False
 
 # (str) Android entry point, default is ok for Kivy-based app
-#android.entrypoint = org.kivy.android.PythonActivity
+android.entrypoint = com.sandmor.utp_smartspellchecker.FileAwarePythonActivity
 
 # (str) Full name including package path of the Java class that implements Android Activity
 # use that parameter together with android.entrypoint to set custom Java class instead of PythonActivity
-#android.activity_class_name = org.kivy.android.PythonActivity
+android.activity_class_name = com.sandmor.utp_smartspellchecker.FileAwarePythonActivity
 
 # (str) Extra xml to write directly inside the <manifest> element of AndroidManifest.xml
 # use that parameter to provide a filename from where to load your custom XML code
@@ -185,7 +185,7 @@ android.extra_manifest_application_arguments = ./cleartext.xml
 
 # (list) List of Java files to add to the android project (can be java or a
 # directory containing the files)
-#android.add_src =
+android.add_src = android_src
 
 # (list) Android AAR archives to add
 #android.add_aars =

@@ -7,7 +7,8 @@ from kivy.utils import platform
 import threading
 import webbrowser
 
-# Import our Flask app
+# Import our Flask app and config
+import backend.config as config
 from backend.server import app as flask_app
 
 class MainLayout(BoxLayout):
@@ -49,7 +50,7 @@ class MainLayout(BoxLayout):
         
     def run_flask(self):
         # We run it without reloader to prevent creating multiple threads/processes
-        flask_app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+        flask_app.run(host='127.0.0.1', port=5000, debug=config.DEBUG_NOTIFICATIONS, use_reloader=False)
 
     def open_webview(self, instance):
         url = "http://127.0.0.1:5000/"
@@ -60,6 +61,9 @@ class MainLayout(BoxLayout):
                 
                 WebView = autoclass('android.webkit.WebView')
                 WebViewClient = autoclass('android.webkit.WebViewClient')
+                FileAwarePythonActivity = autoclass(
+                    'com.sandmor.utp_smartspellchecker.FileAwarePythonActivity'
+                )
                 activity = autoclass('org.kivy.android.PythonActivity').mActivity
                 
                 @run_on_ui_thread
@@ -72,6 +76,8 @@ class MainLayout(BoxLayout):
                     settings.setSaveFormData(False)
                     # This prevents the WebView from opening an external browser
                     webview.setWebViewClient(WebViewClient())
+                    FileAwarePythonActivity.setDebugEnabled(config.DEBUG_NOTIFICATIONS)
+                    FileAwarePythonActivity.attachWebView(webview)
                     webview.loadUrl(url)
                     # Replace the entire Kivy UI with the WebView
                     activity.setContentView(webview)

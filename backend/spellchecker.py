@@ -7,12 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
-SPANISH_NORVIG_FEATURES = os.getenv("SPANISH_NORVIG_FEATURES", "1").lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
+import backend.config as config
+
 
 LETTERS = "abcdefghijklmnopqrstuvwxyzñáéíóúü"
 WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
@@ -28,9 +24,12 @@ PHONETIC_MULTI_REPLACEMENTS = (
 )
 DISTANCE_PENALTY = 4.0
 AFFIX_BACKOFF = 0.18
-MIN_KNOWN_COUNT = int(os.getenv("SPELLCHECKER_MIN_KNOWN_COUNT", "10"))
-TYPO_FREQUENCY_RATIO = int(os.getenv("SPELLCHECKER_TYPO_FREQUENCY_RATIO", "50"))
-ORTHOGRAPHIC_FREQUENCY_RATIO = int(os.getenv("SPELLCHECKER_ORTHOGRAPHIC_FREQUENCY_RATIO", "20"))
+MIN_KNOWN_COUNT = 10
+TYPO_FREQUENCY_RATIO = 50
+ORTHOGRAPHIC_FREQUENCY_RATIO = 20
+MAX_EDITS2_CANDIDATES = 20_000
+MAX_EDITS2_WORD_LENGTH = 15
+CHUNK_SIZE = 1024
 
 MIN_AFFIX_LEMMA_COUNT = 3
 
@@ -107,63 +106,78 @@ def load_frequency_list(path):
 
     return frequencies
 
-# Load the corpus
-CORPUS_PATH = Path(__file__).with_name("crea_processed.txt")
-if not CORPUS_PATH.is_file():
-    raise FileNotFoundError(
-        f"Required spelling corpus was not found at {CORPUS_PATH}. "
-        "Run scripts/preprocess_crea.py and make sure backend/crea_processed.txt "
-        "is included in the Buildozer source package."
-    )
+# Load the corporas
+CORPUS_PATH_ES = Path(__file__).with_name("crea_processed.txt")
+WORDS_ES = load_frequency_list(CORPUS_PATH_ES) if CORPUS_PATH_ES.is_file() else Counter()
+N_ES = sum(WORDS_ES.values())
 
-WORDS = load_frequency_list(CORPUS_PATH)
+CORPUS_PATH_EN = Path(__file__).with_name("big.txt")
+WORDS_EN = load_frequency_list(CORPUS_PATH_EN) if CORPUS_PATH_EN.is_file() else Counter()
+N_EN = sum(WORDS_EN.values())
 
-N = sum(WORDS.values())
-if N == 0:
-    raise RuntimeError(f"Spelling corpus is empty or invalid: {CORPUS_PATH}")
+def get_words(lang):
+    return WORDS_EN if lang == "en" else WORDS_ES
 
-def P(word): 
+def get_n(lang):
+    return N_EN if lang == "en" else N_ES
+
+def P(word, lang="es"):
+    WORDS, N = get_words(lang), get_n(lang) 
     "Probability of `word`."
     return WORDS[word] / N if N > 0 else 0
 
-def spanish_enabled():
-    return SPANISH_NORVIG_FEATURES
+def spanish_enabled(lang="es"):
+    return lang == "es"
 
-def correction(word): 
+def correction(word, lang="es"): 
     "Most probable spelling correction for word."
-    return max(candidates(word), key=lambda candidate: candidate_score(word, candidate))
+    return max(candidates(word, lang), key=lambda candidate: candidate_score(word, candidate, lang))
 
-def candidates(word): 
+def candidates(word, lang="es"): 
     "Generate possible spelling corrections for word."
-    if spanish_enabled():
-        return spanish_candidates(word)
-    return (known([word]) or known(edits1(word)) or known(edits2(word)) or [word])
+    if spanish_enabled(lang):
+        return spanish_candidates(word, lang)
+    return (known([word], lang) or known(edits1(word), lang) or known_limited(edits2(word), lang, MAX_EDITS2_CANDIDATES) or [word])
 
-def known(words_list): 
+def known(words_list, lang="es"):
+    WORDS = get_words(lang) 
     "The subset of `words_list` that appear in the dictionary of WORDS."
     return set(w for w in words_list if WORDS[w] >= MIN_KNOWN_COUNT)
 
-def spanish_known(words_list):
-    "Known words plus Spanish inflections whose stripped lemma is known."
-    return set(w for w in words_list if is_known_word(w) or best_stem_count(w) > 0)
+def known_limited(words_iter, lang="es", limit=MAX_EDITS2_CANDIDATES):
+    "Like known(), but stops after evaluating `limit` candidates."
+    WORDS = get_words(lang)
+    found = set()
+    for i, w in enumerate(words_iter):
+        if i >= limit:
+            break
+        if WORDS[w] >= MIN_KNOWN_COUNT:
+            found.add(w)
+    return found
 
-def is_known_word(word):
+def spanish_known(words_list, lang="es"):
+    "Known words plus Spanish inflections whose stripped lemma is known."
+    return set(w for w in words_list if is_known_word(w, lang) or best_stem_count(w, lang) > 0)
+
+def is_known_word(word, lang="es"):
+    WORDS = get_words(lang)
     "Return whether an exact typed word is accepted as valid."
     count = WORDS[word]
     if count <= 0:
         return False
     if not spanish_enabled():
         return True
-    if has_much_more_common_orthographic_variant(word):
+    if has_much_more_common_orthographic_variant(word, lang):
         return False
     if has_suspicious_low_frequency_shape(word):
         return False
     if count >= MIN_KNOWN_COUNT:
         return True
-    return not is_likely_low_frequency_typo(word)
+    return not is_likely_low_frequency_typo(word, lang)
 
 @lru_cache(maxsize=8192)
-def has_much_more_common_orthographic_variant(word):
+def has_much_more_common_orthographic_variant(word, lang="es"):
+    WORDS = get_words(lang)
     count = WORDS[word]
     if count <= 0:
         return False
@@ -189,7 +203,8 @@ def has_suspicious_low_frequency_shape(word):
     return False
 
 @lru_cache(maxsize=8192)
-def is_likely_low_frequency_typo(word):
+def is_likely_low_frequency_typo(word, lang="es"):
+    WORDS = get_words(lang)
     count = WORDS[word]
     if count <= 0 or count >= MIN_KNOWN_COUNT:
         return False
@@ -216,21 +231,26 @@ def typo_neighbors(word):
 
     return neighbors
 
-def spanish_candidates(word):
+def spanish_candidates(word, lang="es"):
     "Generate Norvig candidates with Spanish phonetic and affix awareness."
-    if is_known_word(word):
+    if is_known_word(word, lang):
         return {word}
 
-    orthographic = known(orthographic_variants(word))
+    orthographic = known(orthographic_variants(word), lang)
     if orthographic:
         return orthographic
 
     near_words = edits1(word) | spanish_edits(word)
-    near = known(near_words) | affix_known(near_words, generated=True)
+    near = known(near_words, lang) | affix_known(near_words, lang, generated=True)
     if near:
         return near
 
-    distant = known(edits2(word))
+    # Skip the expensive edits2 search for very long words where the
+    # candidate space explodes to millions and rarely yields useful results.
+    if len(word) > MAX_EDITS2_WORD_LENGTH:
+        return [word]
+
+    distant = known_limited(edits2(word), lang, MAX_EDITS2_CANDIDATES)
     return distant or [word]
 
 @lru_cache(maxsize=8192)
@@ -271,41 +291,42 @@ def replace_char(word, source, target):
         if char == source
     }
 
-def candidate_score(original, candidate):
+def candidate_score(original, candidate, lang="es"):
     "Frequency score adjusted by Spanish weighted edit distance when enabled."
     if not spanish_enabled():
-        return P(candidate)
+        return P(candidate, lang)
 
-    probability = spanish_probability(candidate)
+    probability = spanish_probability(candidate, lang)
     if probability <= 0:
         return float("-inf") if candidate != original else -1000.0
 
     distance = spanish_weighted_distance(original, candidate)
     return math.log(probability) - (DISTANCE_PENALTY * distance)
 
-def spanish_probability(word):
-    direct = P(word)
+def spanish_probability(word, lang="es"):
+    direct = P(word, lang)
     if direct:
         return direct
 
-    stem_count = best_stem_count(word)
+    stem_count = best_stem_count(word, lang)
     if stem_count:
-        return (stem_count / N) * AFFIX_BACKOFF
+        return (stem_count / get_n(lang)) * AFFIX_BACKOFF
     return 0
 
-def affix_known(words_list, generated=False):
+def affix_known(words_list, lang="es", generated=False):
     return {
         word
         for word in words_list
-        if best_affix_match(word, generated=generated)[0] is not None
+        if best_affix_match(word, lang, generated=generated)[0] is not None
     }
 
-def best_stem_count(word):
-    _stem, count, confidence = best_affix_match(word)
+def best_stem_count(word, lang="es"):
+    _stem, count, confidence = best_affix_match(word, lang)
     return count * confidence
 
 @lru_cache(maxsize=8192)
-def best_affix_match(word, generated=False):
+def best_affix_match(word, lang="es", generated=False):
+    WORDS = get_words(lang)
     matches = [
         (stem, WORDS[stem], confidence)
         for stem, confidence in spanish_stems(word, generated=generated)
@@ -395,7 +416,7 @@ def replace_cost(source_char, target_char):
 
     return 1.0
 
-def correct_text(text):
+def correct_text(text, lang="es"):
     "Parses a full string, corrects the words, and preserves formatting."
     def replace_word(match):
         word = match.group(0)
@@ -405,7 +426,7 @@ def correct_text(text):
         is_upper = word.isupper()
         
         # Correct the lowercase version of the word
-        corrected = correction(word.lower())
+        corrected = correction(word.lower(), lang)
         
         # Restore casing
         if is_upper:
@@ -416,24 +437,32 @@ def correct_text(text):
 
     return WORD_RE.sub(replace_word, text)
 
-def check_text(text):
+def check_text(text, lang="es"):
     "Parses a full string, finds misspelled words, and returns their positions and suggestions."
     results = []
+    # Cache per unique lowercase word: (is_misspelled, sorted_candidates)
+    word_cache = {}
     
     for match in WORD_RE.finditer(text):
         word = match.group(0)
         word_lower = word.lower()
         
-        # If the word is in the dictionary, skip it
-        if is_known_word(word_lower) or (spanish_enabled() and best_affix_match(word_lower)[0]):
+        if word_lower not in word_cache:
+            # If the word is in the dictionary, skip it
+            if is_known_word(word_lower, lang) or (spanish_enabled(lang) and best_affix_match(word_lower, lang)[0]):
+                word_cache[word_lower] = (False, [])
+            else:
+                # Get candidates sorted by probability (descending)
+                cands = sorted(
+                    list(candidates(word_lower, lang)),
+                    key=lambda candidate: candidate_score(word_lower, candidate, lang),
+                    reverse=True,
+                )
+                word_cache[word_lower] = (True, cands)
+
+        is_misspelled, cands = word_cache[word_lower]
+        if not is_misspelled:
             continue
-            
-        # Get candidates sorted by probability (descending)
-        cands = sorted(
-            list(candidates(word_lower)),
-            key=lambda candidate: candidate_score(word_lower, candidate),
-            reverse=True,
-        )
         
         # Maintain casing for suggestions
         is_title = word.istitle()

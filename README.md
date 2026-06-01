@@ -2,6 +2,15 @@
 
 Esta es una aplicación de corrección ortográfica inteligente con una interfaz de editor de texto moderna y sugerencias contextuales, alimentada por el algoritmo de Peter Norvig y alojada localmente usando Flask. La aplicación puede ser compilada para Android utilizando Kivy y Buildozer.
 
+## Editor de Archivos de Texto
+
+La interfaz web funciona como un MVP de editor de archivos de texto:
+
+- Abre archivos `.txt`, `.md`, `.csv` y `.log` desde el navegador.
+- Permite arrastrar y soltar archivos de texto sobre el espacio de trabajo.
+- Revisa el contenido abierto con el corrector en español existente.
+- Guarda cambios directamente cuando el navegador soporta File System Access API; en otros navegadores usa guardado como copia o descarga.
+
 ## Motor de Corrección en Español
 
 El corrector usa una variante del algoritmo de Peter Norvig ajustada para español. Las mejoras específicas del idioma están activadas por defecto porque el foco del proyecto es español, pero están separadas detrás de la bandera `SPANISH_NORVIG_FEATURES`.
